@@ -23,15 +23,15 @@ def pure_morph_tok(dirty_token):
         morphed_word = morphed_word.rstrip('+0')
         # substitute own delimiter in place of morpher's
         clean_morph_word = re.sub('[+_=]', MORPH_DELIMITER, morphed_word)
-        print('{} --> {}'.format(mtok, clean_morph_word))
+        #print('{} --> {}'.format(mtok, clean_morph_word))
         return clean_morph_word
 
 
 if __name__ == '__main__':
 
-    with open('train5.et', encoding='utf-8') as f:
+    with open('train.et', encoding='utf-8') as f:
         sents = f.readlines()
-    with open('train5-morf.et', encoding='utf-8') as f:
+    with open('train.etana.et', encoding='utf-8') as f:
         morph_toks = f.readlines()
 
     new_sents = []
@@ -40,17 +40,20 @@ if __name__ == '__main__':
     for sent in sents:
         words = sent.strip().split()
         new_words = []
-        for word in words:
-            print(word)
+        i = 0
+        while i < len(words):
+            #print(word)
             morphed = pure_morph_tok(morph_toks[morph_tok_idx])
             morph_tok_idx += 1
             if morphed is None:
                 # no morph
-                new_words.append(word)
+                new_words.append(words[i])
             else:
                 new_words.append(morphed)
+                i += morphed.count(' ')  # morphezzor sometimes decides to group words; this keeps them from misaligning
+            i += 1
 
         new_sents.append(' '.join(new_words))
 
-    with open('train5.morphed.et', mode='w', encoding='utf-8') as f:
+    with open('train.morphed.et', mode='w', encoding='utf-8') as f:
         f.write('\n'.join(new_sents))
