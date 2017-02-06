@@ -54,6 +54,8 @@ def create_parser():
     parser.add_argument(
         '--verbose', '-v', action="store_true",
         help="verbose mode.")
+    parser.add_argument(
+        '--morphed', '-m', action='store_true')
 
     return parser
 
@@ -186,7 +188,11 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     vocab = get_vocabulary(args.input)
-    vocab = dict([(tuple(x) + ('</w>',), y) for (x, y) in vocab.items()])
+    if args.morphed:
+        from postmorf import MORPH_DELIMITER
+        vocab = dict([(tuple(x.split(MORPH_DELIMITER)) + ('</w>',), y) for (x, y) in vocab.items()])
+    else:
+        vocab = dict([(tuple(x) + ('</w>',), y) for (x, y) in vocab.items()])
     sorted_vocab = sorted(vocab.items(), key=lambda x: x[1], reverse=True)
 
     stats, indices = get_pair_statistics(sorted_vocab)
