@@ -17,28 +17,30 @@ import sys
 import codecs
 import argparse
 from collections import defaultdict
+from functools import reduce
 
 # hack for python2/3 compatibility
 from io import open
+
 argparse.open = open
 
 # python 2/3 compatibility
 if sys.version_info < (3, 0):
-  sys.stderr = codecs.getwriter('UTF-8')(sys.stderr)
-  sys.stdout = codecs.getwriter('UTF-8')(sys.stdout)
-  sys.stdin = codecs.getreader('UTF-8')(sys.stdin)
+    sys.stderr = codecs.getwriter('UTF-8')(sys.stderr)
+    sys.stdout = codecs.getwriter('UTF-8')(sys.stdout)
+    sys.stdin = codecs.getreader('UTF-8')(sys.stdin)
 
 import codecs
 
-class BPE(object):
 
-    def __init__(self, codes, separator='@@'):            
-        
+class BPE(object):
+    def __init__(self, codes, separator='@@'):
+
         with codecs.open(codes.name, encoding='utf-8') as codes:
             self.bpe_codes = [tuple(item.split()) for item in codes]
-         
+
         # some hacking to deal with duplicates (only consider first instance)
-        self.bpe_codes = dict([(code,i) for (i,code) in reversed(list(enumerate(self.bpe_codes)))])
+        self.bpe_codes = dict([(code, i) for (i, code) in reversed(list(enumerate(self.bpe_codes)))])
 
         self.separator = separator
 
@@ -50,10 +52,12 @@ class BPE(object):
             new_word = encode(word, self.bpe_codes)
 
             for item in new_word[:-1]:
-                output.append(item + self.separator)
+                if item != '==':
+                    output.append(item + self.separator)
             output.append(new_word[-1])
 
         return ' '.join(output)
+
 
 def create_parser():
     parser = argparse.ArgumentParser(
@@ -78,6 +82,7 @@ def create_parser():
 
     return parser
 
+
 def get_pairs(word):
     """Return set of symbol pairs in a word.
 
@@ -86,9 +91,11 @@ def get_pairs(word):
     pairs = set()
     prev_char = word[0]
     for char in word[1:]:
-        pairs.add((prev_char, char))
+        if prev_char != '==' and char != '==':
+            pairs.add((prev_char, char))
         prev_char = char
     return pairs
+
 
 def encode(orig, bpe_codes, cache={}):
     """Encode word based on list of BPE merge operations, which are applied consecutively
@@ -97,11 +104,18 @@ def encode(orig, bpe_codes, cache={}):
     if orig in cache:
         return cache[orig]
 
-    word = tuple(orig) + ('</w>',)
+    # Hardcode using morphemes instead of chars
+    # from postmorf import MORPH_DELIMITER
+    # word = tuple(orig.split(MORPH_DELIMITER)) + ('</w>',)
+    # Orig:
+    #word = tuple(orig) + ('</w>',)
+
+    word = tuple(reduce(lambda t1, t2: t1 + ('==',) + t2, map(lambda p: tuple(p), orig.split('==')))) + ('</w>',)
+
     pairs = get_pairs(word)
 
     while True:
-        bigram = min(pairs, key = lambda pair: bpe_codes.get(pair, float('inf')))
+        bigram = min(pairs, key=lambda pair: bpe_codes.get(pair, float('inf')))
         if bigram not in bpe_codes:
             break
         first, second = bigram
@@ -116,8 +130,8 @@ def encode(orig, bpe_codes, cache={}):
                 new_word.extend(word[i:])
                 break
 
-            if word[i] == first and i < len(word)-1 and word[i+1] == second:
-                new_word.append(first+second)
+            if word[i] == first and i < len(word) - 1 and word[i + 1] == second:
+                new_word.append(first + second)
                 i += 2
             else:
                 new_word.append(word[i])
@@ -127,13 +141,16 @@ def encode(orig, bpe_codes, cache={}):
         if len(word) == 1:
             break
         else:
+            if len(word) - 2 * word.count('==') - 1 == 0:
+                # If magic then allow to merge morphemes
+                word = tuple(filter(lambda t: t != '==', word))
             pairs = get_pairs(word)
 
     # don't print end-of-word symbols
     if word[-1] == '</w>':
         word = word[:-1]
     elif word[-1].endswith('</w>'):
-        word = word[:-1] + (word[-1].replace('</w>',''),)
+        word = word[:-1] + (word[-1].replace('</w>', ''),)
 
     cache[orig] = word
     return word

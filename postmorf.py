@@ -31,7 +31,7 @@ if __name__ == '__main__':
 
     with open('train.et', encoding='utf-8') as f:
         sents = f.readlines()
-    with open('train.etana.et', encoding='utf-8') as f:
+    with open('etana-out.et', encoding='utf-8') as f:
         morph_toks = f.readlines()
 
     new_sents = []
@@ -55,5 +55,5 @@ if __name__ == '__main__':
 
         new_sents.append(' '.join(new_words))
 
-    with open('train.morphed.et', mode='w', encoding='utf-8') as f:
+    with open('etana-out.et', mode='w', encoding='utf-8') as f:
         f.write('\n'.join(new_sents))

@@ -13,14 +13,13 @@ Proceedings of the 54th Annual Meeting of the Association for Computational Ling
 
 from __future__ import unicode_literals
 
-import sys
-import codecs
-import re
-import copy
 import argparse
+import codecs
+import copy
+import re
+import sys
 from collections import defaultdict, Counter
-
-# hack for python2/3 compatibility
+from functools import reduce
 from io import open
 
 argparse.open = open
@@ -40,22 +39,30 @@ def create_parser():
     parser.add_argument(
         '--input', '-i', type=argparse.FileType('r'), default=sys.stdin,
         metavar='PATH',
-        help="Input text (default: standard input).")
+        help="Input text (default: standard input)")
     parser.add_argument(
         '--output', '-o', type=argparse.FileType('w'), default=sys.stdout,
         metavar='PATH',
         help="Output file for BPE codes (default: standard output)")
     parser.add_argument(
         '--symbols', '-s', type=int, default=10000,
-        help="Create this many new symbols (each representing a character n-gram) (default: %(default)s))")
+        help="Create this many new symbols (each representing a character n-gram) (default: %(default)s)")
     parser.add_argument(
         '--min-frequency', type=int, default=2, metavar='FREQ',
-        help='Stop if no symbol pair has frequency >= FREQ (default: %(default)s))')
+        help='Stop if no symbol pair has frequency >= FREQ (default: %(default)s)')
     parser.add_argument(
         '--verbose', '-v', action="store_true",
         help="verbose mode.")
     parser.add_argument(
-        '--morphed', '-m', action='store_true')
+        '--morph-as-char', '-m', action='store_true',
+        help='Start with morphemes as BPE starting tokens instead of characters. ' +
+             'Input words must be segmented into morphemes.')
+    parser.add_argument(
+        '--delimiter', '-d', type=str, default='==',
+        help='Delimiter used to separate morphemes (default: %(default)s)')
+    parser.add_argument(
+        '--morph-aware', action='store_true',
+        help="If you need help, you're stupid and should become a codemonkey-sheeple-person instead.")
 
     return parser
 
@@ -82,44 +89,85 @@ def update_pair_statistics(pair, changed, stats, indices):
     new_pair = first + second
     for j, word, old_word, freq in changed:
 
-        # find all instances of pair, and update frequency/indices around it
-        i = 0
-        while True:
-            try:
-                i = old_word.index(first, i)
-            except ValueError:
-                break
-            if i < len(old_word) - 1 and old_word[i + 1] == second:
+        if '==' in old_word and '==' not in word:
+            # Big changes (in your life tomorrow)
+            # for morpheme in split_tuple(old_word, '=='):
+            #     prev_char = morpheme[0]
+            #     for char in morpheme[1:]:
+            #         indices[prev_char, char][j] -= 1
+            #         prev_char = char
+            # indices[first, second][j] -=1
+
+            # Kõik indeksid invalideeritakse jube enne
+
+            # Ei ole vaja paaride tõenäosuseid vanas sõnas uutest statsidest lahutada,
+            # sest seal sai olla ainult üks paar (see, mida viimasena liideti) ja seda on uutes statsides niikuinii 0
+
+            # add newly discovered pairs to stats & index
+            prev_token = word[0]
+            for token in word[1:]:
+                    stats[prev_token, token] += freq
+                    indices[prev_token, token][j] += 1
+                    prev_token = token
+        else:
+            # find all instances of pair, and update frequency/indices around it
+            i = 0
+            while True:
+                try:
+                    i = old_word.index(first, i)
+                except ValueError:
+                    break
+                if i < len(old_word) - 1 and old_word[i + 1] == second:
+                    if i:
+                        prev = old_word[i - 1:i + 1]
+                        if '==' not in prev:
+                            stats[prev] -= freq
+                            indices[prev][j] -= 1
+                    if i < len(old_word) - 2:
+                        # don't double-count consecutive pairs
+                        if old_word[i + 2] != first or i >= len(old_word) - 3 or old_word[i + 3] != second:
+                            nex = old_word[i + 1:i + 3]
+                            if '==' not in nex:
+                                stats[nex] -= freq
+                                indices[nex][j] -= 1
+                    i += 2
+                else:
+                    i += 1
+
+            i = 0
+            while True:
+                try:
+                    i = word.index(new_pair, i)
+                except ValueError:
+                    break
                 if i:
-                    prev = old_word[i - 1:i + 1]
-                    stats[prev] -= freq
-                    indices[prev][j] -= 1
-                if i < len(old_word) - 2:
-                    # don't double-count consecutive pairs
-                    if old_word[i + 2] != first or i >= len(old_word) - 3 or old_word[i + 3] != second:
-                        nex = old_word[i + 1:i + 3]
-                        stats[nex] -= freq
-                        indices[nex][j] -= 1
-                i += 2
-            else:
+                    prev = word[i - 1:i + 1]
+                    if '==' not in prev:
+                        stats[prev] += freq
+                        indices[prev][j] += 1
+                # don't double-count consecutive pairs
+                if i < len(word) - 1 and word[i + 1] != new_pair:
+                    nex = word[i:i + 2]
+                    if '==' not in nex:
+                        stats[nex] += freq
+                        indices[nex][j] += 1
                 i += 1
 
-        i = 0
-        while True:
-            try:
-                i = word.index(new_pair, i)
-            except ValueError:
-                break
-            if i:
-                prev = word[i - 1:i + 1]
-                stats[prev] += freq
-                indices[prev][j] += 1
-            # don't double-count consecutive pairs
-            if i < len(word) - 1 and word[i + 1] != new_pair:
-                nex = word[i:i + 2]
-                stats[nex] += freq
-                indices[nex][j] += 1
-            i += 1
+
+def split_tuple(tpl, delim):
+    lst = []
+    start_idx = 0
+    end_idx = -1
+    while True:
+        try:
+            end_idx = tpl.index(delim, start_idx)
+        except ValueError:
+            lst.append(tpl[end_idx + 1:])
+            break
+        lst.append(tpl[start_idx: end_idx])
+        start_idx = end_idx + 1
+
+    return tuple(lst)
 
 
 def get_pair_statistics(vocab):
@@ -132,11 +180,12 @@ def get_pair_statistics(vocab):
     indices = defaultdict(lambda: defaultdict(int))
 
     for i, (word, freq) in enumerate(vocab):
-        prev_char = word[0]
-        for char in word[1:]:
-            stats[prev_char, char] += freq
-            indices[prev_char, char][i] += 1
-            prev_char = char
+        for morpheme in split_tuple(word, '=='):
+            prev_char = morpheme[0]
+            for char in morpheme[1:]:
+                stats[prev_char, char] += freq
+                indices[prev_char, char][i] += 1
+                prev_char = char
 
     return stats, indices
 
@@ -158,10 +207,14 @@ def replace_pair(pair, vocab, indices):
         word, freq = vocab[j]
         new_word = ' '.join(word)
         new_word = pattern.sub(pair_str, new_word)
-        new_word = tuple(new_word.split())
+        new_word_tpl = tuple(new_word.split())
 
-        vocab[j] = (new_word, freq)
-        changes.append((j, new_word, word, freq))
+        if len(new_word_tpl) - 2 * new_word_tpl.count('==') - 1 == 0:
+            # If magic then allow to merge morphemes
+            new_word_tpl = tuple(filter(lambda t: t != '==', new_word_tpl))
+
+        vocab[j] = (new_word_tpl, freq)
+        changes.append((j, new_word_tpl, word, freq))
 
     return changes
 
@@ -188,9 +241,12 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     vocab = get_vocabulary(args.input)
-    if args.morphed:
-        from postmorf import MORPH_DELIMITER
-        vocab = dict([(tuple(x.split(MORPH_DELIMITER)) + ('</w>',), y) for (x, y) in vocab.items()])
+    if args.morph_as_char:
+        vocab = dict([(tuple(x.split(args.delimiter)) + ('</w>',), y) for (x, y) in vocab.items()])
+    elif args.morph_aware:
+        # You ask why. I ask why not.
+        vocab = dict([(tuple(reduce(lambda t1, t2: t1 + (args.delimiter,) + t2, map(lambda p: tuple(p), x.split(args.delimiter)))) + ('</w>',), y) for (x, y) in
+                      vocab.items()])
     else:
         vocab = dict([(tuple(x) + ('</w>',), y) for (x, y) in vocab.items()])
     sorted_vocab = sorted(vocab.items(), key=lambda x: x[1], reverse=True)
